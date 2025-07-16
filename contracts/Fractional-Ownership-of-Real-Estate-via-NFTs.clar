@@ -5,6 +5,7 @@
 (define-constant err-invalid-percentage (err u103))
 (define-constant err-property-exists (err u104))
 (define-constant err-insufficient-funds (err u105))
+(define-constant err-invalid-valuation (err u106))
 
 (define-non-fungible-token property uint)
 
@@ -32,6 +33,14 @@
     {
         property-id: uint,
         owner: principal,
+    }
+    uint
+)
+
+(define-map property-valuations
+    {
+        property-id: uint,
+        timestamp: uint,
     }
     uint
 )
@@ -77,6 +86,16 @@
             owner: owner,
         })
     )
+)
+
+(define-read-only (get-property-valuation
+        (property-id uint)
+        (timestamp uint)
+    )
+    (map-get? property-valuations {
+        property-id: property-id,
+        timestamp: timestamp,
+    })
 )
 
 (define-public (register-property
@@ -192,5 +211,48 @@
             (merge property-entry { active: false })
         )
         (ok true)
+    )
+)
+
+(define-public (update-property-valuation
+        (property-id uint)
+        (valuation uint)
+    )
+    (let ((property-entry (unwrap! (map-get? property-details property-id) err-token-not-found)))
+        (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+        (asserts! (> valuation u0) err-invalid-valuation)
+        (map-set property-valuations {
+            property-id: property-id,
+            timestamp: stacks-block-height,
+        }
+            valuation
+        )
+        (ok true)
+    )
+)
+
+(define-public (calculate-valuation-change
+        (property-id uint)
+        (old-timestamp uint)
+        (new-timestamp uint)
+    )
+    (let (
+            (old-valuation (unwrap!
+                (map-get? property-valuations {
+                    property-id: property-id,
+                    timestamp: old-timestamp,
+                })
+                err-token-not-found
+            ))
+            (new-valuation (unwrap!
+                (map-get? property-valuations {
+                    property-id: property-id,
+                    timestamp: new-timestamp,
+                })
+                err-token-not-found
+            ))
+        )
+        (asserts! (> new-timestamp old-timestamp) err-invalid-valuation)
+        (ok (- new-valuation old-valuation))
     )
 )
