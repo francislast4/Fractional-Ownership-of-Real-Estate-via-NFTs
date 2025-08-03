@@ -6,6 +6,9 @@
 (define-constant err-property-exists (err u104))
 (define-constant err-insufficient-funds (err u105))
 (define-constant err-invalid-valuation (err u106))
+(define-constant err-voting-closed (err u107))
+(define-constant err-already-voted (err u108))
+(define-constant err-proposal-not-found (err u109))
 
 (define-non-fungible-token property uint)
 
@@ -45,8 +48,30 @@
     uint
 )
 
+(define-map proposals
+    uint
+    {
+        property-id: uint,
+        title: (string-ascii 128),
+        description: (string-ascii 512),
+        voting-end-height: uint,
+        yes-votes: uint,
+        no-votes: uint,
+        executed: bool,
+    }
+)
+
+(define-map proposal-votes
+    {
+        proposal-id: uint,
+        voter: principal,
+    }
+    bool
+)
+
 (define-data-var last-property-id uint u0)
 (define-data-var total-revenue uint u0)
+(define-data-var last-proposal-id uint u0)
 
 (define-read-only (get-last-token-id)
     (ok (var-get last-property-id))
@@ -96,6 +121,20 @@
         property-id: property-id,
         timestamp: timestamp,
     })
+)
+
+(define-read-only (get-proposal (proposal-id uint))
+    (map-get? proposals proposal-id)
+)
+
+(define-read-only (get-vote-status
+        (proposal-id uint)
+        (voter principal)
+    )
+    (is-some (map-get? proposal-votes {
+        proposal-id: proposal-id,
+        voter: voter,
+    }))
 )
 
 (define-public (register-property
@@ -254,5 +293,87 @@
         )
         (asserts! (> new-timestamp old-timestamp) err-invalid-valuation)
         (ok (- new-valuation old-valuation))
+    )
+)
+
+(define-public (create-proposal
+        (property-id uint)
+        (title (string-ascii 128))
+        (description (string-ascii 512))
+        (voting-duration uint)
+    )
+    (let ((new-proposal-id (+ (var-get last-proposal-id) u1)))
+        (asserts! (is-some (map-get? property-details property-id))
+            err-token-not-found
+        )
+        (asserts! (> (get-shares property-id tx-sender) u0) err-not-token-owner)
+        (asserts! (> voting-duration u0) err-invalid-percentage)
+        (map-set proposals new-proposal-id {
+            property-id: property-id,
+            title: title,
+            description: description,
+            voting-end-height: (+ stacks-block-height voting-duration),
+            yes-votes: u0,
+            no-votes: u0,
+            executed: false,
+        })
+        (var-set last-proposal-id new-proposal-id)
+        (ok new-proposal-id)
+    )
+)
+
+(define-public (vote-on-proposal
+        (proposal-id uint)
+        (vote bool)
+    )
+    (let (
+            (proposal-entry (unwrap! (map-get? proposals proposal-id) err-proposal-not-found))
+            (voter-shares (get-shares (get property-id proposal-entry) tx-sender))
+        )
+        (asserts! (> voter-shares u0) err-not-token-owner)
+        (asserts! (< stacks-block-height (get voting-end-height proposal-entry))
+            err-voting-closed
+        )
+        (asserts! (not (get-vote-status proposal-id tx-sender)) err-already-voted)
+        (map-set proposal-votes {
+            proposal-id: proposal-id,
+            voter: tx-sender,
+        }
+            true
+        )
+        (if vote
+            (map-set proposals proposal-id
+                (merge proposal-entry { yes-votes: (+ (get yes-votes proposal-entry) voter-shares) })
+            )
+            (map-set proposals proposal-id
+                (merge proposal-entry { no-votes: (+ (get no-votes proposal-entry) voter-shares) })
+            )
+        )
+        (ok true)
+    )
+)
+
+(define-public (execute-proposal (proposal-id uint))
+    (let (
+            (proposal-entry (unwrap! (map-get? proposals proposal-id) err-proposal-not-found))
+            (property-details-entry (unwrap! (map-get? property-details (get property-id proposal-entry))
+                err-token-not-found
+            ))
+            (total-shares (get total-shares property-details-entry))
+            (quorum-threshold (/ total-shares u2))
+        )
+        (asserts! (>= stacks-block-height (get voting-end-height proposal-entry))
+            err-voting-closed
+        )
+        (asserts! (not (get executed proposal-entry)) err-property-exists)
+        (asserts!
+            (> (get yes-votes proposal-entry) (get no-votes proposal-entry))
+            err-insufficient-funds
+        )
+        (asserts! (> (get yes-votes proposal-entry) quorum-threshold)
+            err-insufficient-funds
+        )
+        (map-set proposals proposal-id (merge proposal-entry { executed: true }))
+        (ok true)
     )
 )
