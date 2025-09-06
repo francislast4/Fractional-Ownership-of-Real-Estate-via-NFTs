@@ -193,7 +193,11 @@
         )
         (let ((current-shareholders (default-to (list) (map-get? property-shareholders property-id))))
             (if (is-none (index-of current-shareholders tx-sender))
-                (map-set property-shareholders property-id (unwrap! (as-max-len? (append current-shareholders tx-sender) u200) err-no-shareholders))
+                (map-set property-shareholders property-id
+                    (unwrap!
+                        (as-max-len? (append current-shareholders tx-sender) u200)
+                        err-no-shareholders
+                    ))
                 true
             )
         )
@@ -222,7 +226,11 @@
         )
         (let ((current-shareholders (default-to (list) (map-get? property-shareholders property-id))))
             (if (is-none (index-of current-shareholders recipient))
-                (map-set property-shareholders property-id (unwrap! (as-max-len? (append current-shareholders recipient) u200) err-no-shareholders))
+                (map-set property-shareholders property-id
+                    (unwrap!
+                        (as-max-len? (append current-shareholders recipient) u200)
+                        err-no-shareholders
+                    ))
                 true
             )
         )
@@ -403,7 +411,9 @@
     )
     (let (
             (property-details-entry (unwrap! (map-get? property-details property-id) err-token-not-found))
-            (shareholders (unwrap! (map-get? property-shareholders property-id) err-no-shareholders))
+            (shareholders (unwrap! (map-get? property-shareholders property-id)
+                err-no-shareholders
+            ))
             (shares (get-shares property-id shareholder))
             (total-shares (get total-shares property-details-entry))
             (revenue-pool (get revenue-pool property-details-entry))
@@ -411,7 +421,9 @@
         )
         (asserts! (is-eq tx-sender contract-owner) err-owner-only)
         (asserts! (> dividend-amount u0) err-insufficient-funds)
-        (asserts! (is-some (index-of shareholders shareholder)) err-not-token-owner)
+        (asserts! (is-some (index-of shareholders shareholder))
+            err-not-token-owner
+        )
         (try! (as-contract (stx-transfer? dividend-amount tx-sender shareholder)))
         (ok dividend-amount)
     )
