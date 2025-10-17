@@ -11,6 +11,8 @@
 (define-constant err-proposal-not-found (err u109))
 (define-constant err-dividend-failed (err u110))
 (define-constant err-no-shareholders (err u111))
+(define-constant err-no-buyback-offer (err u112))
+(define-constant err-buyback-inactive (err u113))
 
 (define-non-fungible-token property uint)
 
@@ -74,6 +76,16 @@
 (define-map property-shareholders
     uint
     (list 200 principal)
+)
+
+(define-map buyback-offers
+    uint
+    {
+        price-per-share: uint,
+        max-shares: uint,
+        shares-bought: uint,
+        active: bool,
+    }
 )
 
 (define-data-var last-property-id uint u0)
@@ -431,4 +443,69 @@
 
 (define-read-only (get-property-shareholders (property-id uint))
     (map-get? property-shareholders property-id)
+)
+
+(define-public (create-buyback-offer
+        (property-id uint)
+        (price-per-share uint)
+        (max-shares uint)
+    )
+    (let ((property-entry (unwrap! (map-get? property-details property-id) err-token-not-found)))
+        (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+        (asserts! (> price-per-share u0) err-invalid-percentage)
+        (asserts! (> max-shares u0) err-invalid-percentage)
+        (map-set buyback-offers property-id {
+            price-per-share: price-per-share,
+            max-shares: max-shares,
+            shares-bought: u0,
+            active: true,
+        })
+        (ok true)
+    )
+)
+
+(define-public (accept-buyback-offer
+        (property-id uint)
+        (share-count uint)
+    )
+    (let (
+            (buyback-offer (unwrap! (map-get? buyback-offers property-id) err-no-buyback-offer))
+            (seller-shares (get-shares property-id tx-sender))
+            (shares-remaining (- (get max-shares buyback-offer) (get shares-bought buyback-offer)))
+            (shares-to-sell (if (<= share-count shares-remaining)
+                share-count
+                shares-remaining
+            ))
+            (total-payment (* shares-to-sell (get price-per-share buyback-offer)))
+        )
+        (asserts! (get active buyback-offer) err-buyback-inactive)
+        (asserts! (> shares-remaining u0) err-insufficient-funds)
+        (asserts! (>= seller-shares share-count) err-insufficient-funds)
+        (asserts! (> share-count u0) err-invalid-percentage)
+        (try! (stx-transfer? total-payment contract-owner tx-sender))
+        (map-set share-ownership {
+            property-id: property-id,
+            owner: tx-sender,
+        }
+            (- seller-shares shares-to-sell)
+        )
+        (map-set buyback-offers property-id
+            (merge buyback-offer { shares-bought: (+ (get shares-bought buyback-offer) shares-to-sell) })
+        )
+        (ok shares-to-sell)
+    )
+)
+
+(define-public (cancel-buyback-offer (property-id uint))
+    (let ((buyback-offer (unwrap! (map-get? buyback-offers property-id) err-no-buyback-offer)))
+        (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+        (map-set buyback-offers property-id
+            (merge buyback-offer { active: false })
+        )
+        (ok true)
+    )
+)
+
+(define-read-only (get-buyback-offer (property-id uint))
+    (map-get? buyback-offers property-id)
 )
