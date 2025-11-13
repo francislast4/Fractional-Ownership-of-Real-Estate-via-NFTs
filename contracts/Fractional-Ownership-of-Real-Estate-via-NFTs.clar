@@ -509,3 +509,129 @@
 (define-read-only (get-buyback-offer (property-id uint))
     (map-get? buyback-offers property-id)
 )
+
+(define-map share-listings
+    {
+        property-id: uint,
+        seller: principal,
+    }
+    {
+        price-per-share: uint,
+        share-amount: uint,
+        active: bool,
+    }
+)
+
+(define-public (create-share-listing
+        (property-id uint)
+        (share-amount uint)
+        (price-per-share uint)
+    )
+    (let ((seller-shares (get-shares property-id tx-sender)))
+        (asserts! (> share-amount u0) err-invalid-percentage)
+        (asserts! (> price-per-share u0) err-invalid-percentage)
+        (asserts! (>= seller-shares share-amount) err-insufficient-funds)
+        (map-set share-ownership {
+            property-id: property-id,
+            owner: tx-sender,
+        }
+            (- seller-shares share-amount)
+        )
+        (map-set share-listings {
+            property-id: property-id,
+            seller: tx-sender,
+        } {
+            price-per-share: price-per-share,
+            share-amount: share-amount,
+            active: true,
+        })
+        (ok true)
+    )
+)
+
+(define-public (cancel-share-listing (property-id uint))
+    (let (
+            (listing (unwrap!
+                (map-get? share-listings {
+                    property-id: property-id,
+                    seller: tx-sender,
+                })
+                err-token-not-found
+            ))
+            (current-shares (get-shares property-id tx-sender))
+        )
+        (asserts! (get active listing) err-buyback-inactive)
+        (map-set share-ownership {
+            property-id: property-id,
+            owner: tx-sender,
+        }
+            (+ current-shares (get share-amount listing))
+        )
+        (map-set share-listings {
+            property-id: property-id,
+            seller: tx-sender,
+        } {
+            price-per-share: (get price-per-share listing),
+            share-amount: u0,
+            active: false,
+        })
+        (ok true)
+    )
+)
+
+(define-public (purchase-listed-shares
+        (property-id uint)
+        (seller principal)
+        (share-amount uint)
+    )
+    (let (
+            (listing (unwrap!
+                (map-get? share-listings {
+                    property-id: property-id,
+                    seller: seller,
+                })
+                err-token-not-found
+            ))
+            (property-details-entry (unwrap! (map-get? property-details property-id) err-token-not-found))
+            (current-buyer-shares (get-shares property-id tx-sender))
+            (available-amount (get share-amount listing))
+            (effective-amount (if (<= share-amount available-amount)
+                share-amount
+                available-amount
+            ))
+            (total-shares (get total-shares property-details-entry))
+            (total-cost (* effective-amount (get price-per-share listing)))
+        )
+        (asserts! (get active listing) err-buyback-inactive)
+        (asserts! (> effective-amount u0) err-insufficient-funds)
+        (asserts! (<= (+ current-buyer-shares effective-amount) total-shares)
+            err-invalid-percentage
+        )
+        (try! (stx-transfer? total-cost tx-sender seller))
+        (map-set share-ownership {
+            property-id: property-id,
+            owner: tx-sender,
+        }
+            (+ current-buyer-shares effective-amount)
+        )
+        (map-set share-listings {
+            property-id: property-id,
+            seller: seller,
+        } {
+            price-per-share: (get price-per-share listing),
+            share-amount: (- available-amount effective-amount),
+            active: (> (- available-amount effective-amount) u0),
+        })
+        (ok effective-amount)
+    )
+)
+
+(define-read-only (get-share-listing
+        (property-id uint)
+        (seller principal)
+    )
+    (map-get? share-listings {
+        property-id: property-id,
+        seller: seller,
+    })
+)
